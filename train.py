@@ -100,9 +100,9 @@ for epoch in range(1, epochs+1):
             with tf.GradientTape() as tape:
                 hr_disc = Discriminator(imgs_tensor_hr)
                 sr_disc = Discriminator(imgs_tensor_sr)
-                D_RF = tf.sigmoid(hr_disc - tf.reduce_mean(sr_disc))
-                D_FR = tf.sigmoid(sr_disc - tf.reduce_mean(hr_disc))
-                loss_d = - tf.reduce_mean(tf.math.log(D_RF)) - tf.reduce_mean(tf.math.log(1 - D_RF))
+                D_RF = tf.cast(tf.sigmoid(hr_disc - tf.reduce_mean(sr_disc)), dtype=tf.float64)
+                D_FR = tf.cast(tf.sigmoid(sr_disc - tf.reduce_mean(hr_disc)), dtype=tf.float64)
+                loss_d = tf.reduce_mean(bce(tf.ones_like(input=D_RF), D_RF) + bce(tf.zeros_like(input=D_FR), D_FR))
                 train_history['loss_d'] = float(loss_d)
             optim_d.minimize(loss_d, Discriminator.trainable_variables, tape = tape)
 
@@ -116,17 +116,15 @@ for epoch in range(1, epochs+1):
                 imgs_tensor_sr_feature_map = feature_extractor(imgs_tensor_sr) / 12.75
                 imgs_tensor_hr_feature_map = feature_extractor(imgs_tensor_hr) / 12.75
 
-                adv_loss = - tf.reduce_mean(tf.math.log(1-D_RF)) - tf.reduce_mean(tf.math.log(D_RF))
+                adv_loss = tf.reduce_mean(bce(tf.zeros_like(input=D_RF), D_RF) + bce(tf.ones_like(input=D_FR), D_FR))
 
-                w, d = imgs_tensor_sr_feature_map.shape[1:3]
-                vgg_loss = tf.reduce_sum(tf.square(imgs_tensor_sr_feature_map - imgs_tensor_hr_feature_map), axis=(1,2,3)) / (w*d)
+                vgg_loss = tf.reduce_mean(tf.square(imgs_tensor_sr_feature_map - imgs_tensor_hr_feature_map), axis=(1,2,3)) * 3
                 vgg_loss = tf.reduce_mean(vgg_loss)
 
-                w, d = imgs_tensor_sr.shape[1:3]
-                l1_loss = tf.reduce_sum(tf.abs(imgs_tensor_sr - imgs_tensor_hr) / (w*d), axis=(1,2,3))
+                l1_loss = tf.reduce_mean(tf.abs(imgs_tensor_sr - imgs_tensor_hr), axis=(1,2,3))
                 l1_loss = tf.reduce_mean(l1_loss)
 
-                loss_g = adv_loss * 0.005 + vgg_loss + l1_loss * 0.001
+                loss_g = adv_loss * 0.005 + vgg_loss + l1_loss * 0.01
 
                 train_history['adv_loss'] = float(adv_loss)
                 train_history['vgg_loss'] = float(vgg_loss)
@@ -141,7 +139,7 @@ for epoch in range(1, epochs+1):
             imgs_tensor_sr[imgs_tensor_sr < 0] = 0
             imgs_tensor_hr = (imgs_tensor_hr + 1) / 2
 
-            plt.subplot(1,2,1)
+            plt.subplot(1,3,1)
             plt.imshow(BGR2RGB(imgs_tensor_lr[0]))
             plt.subplot(1,3,2)
             plt.imshow(BGR2RGB(imgs_tensor_sr[0]))
