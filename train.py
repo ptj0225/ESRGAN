@@ -20,8 +20,8 @@ except:
 parser = argparse.ArgumentParser()
 parser.add_argument('--epochs', required=False, default=100, help='epochs')
 parser.add_argument('--batchs', required=False, default=4, help='batchs')
-parser.add_argument('--lr_g', required=False, default=0.0001, help='learning rate of generator')
-parser.add_argument('--lr_d', required=False, default=0.0001, help='learning rate of discriminator')
+parser.add_argument('--lr_g', required=False, default=0.00005, help='learning rate of generator')
+parser.add_argument('--lr_d', required=False, default=0.00005, help='learning rate of discriminator')
 parser.add_argument('--train_dir', required=False, default="./train/", help='directory of image to train / 학습 할 이미지 위치')
 parser.add_argument('--load_model', required=False, default=True, help='load saved model / 저장된 모델 불러오기 (1: True, 0: False)')
 parser.add_argument('--use_cpu', required=False, default=False, help='forced to use CPU only / CPU 만 이용해 학습하기 (1: True, 0: False)')
@@ -61,30 +61,32 @@ else:
 # feature map 생성을 위한 feature extractor 선언
 feature_extractor = get_feature_extractor()
 
+feature_extractor.trainable = False
+Discriminator.trainable = True
+Generator.trainable = True
+
 def BGR2RGB(image):
     channels = tf.unstack(image, axis=-1)
     image    = tf.stack([channels[2], channels[1], channels[0]], axis=-1)
     return image
 
 imgs = []
-mse = tf.losses.mean_squared_error
-bce = tf.losses.binary_crossentropy
-optim_g = tf.optimizers.Adam(lr_g, beta_1=0.9)
-optim_d = tf.optimizers.Adam(lr_d, beta_1=0.9)
+mae = tf.keras.losses.MeanAbsoluteError()
+mse = tf.keras.losses.MeanSquaredError()
+bce = tf.losses.BinaryCrossentropy()
+optim_g = tf.optimizers.Adam(lr_g, beta_1=0.9, beta_2=0.999)
+optim_d = tf.optimizers.Adam(lr_d, beta_1=0.9, beta_2=0.999)
 iter_count = 1
 im_inx = glob(train_dir + "*.png") + glob(train_dir + "*.jpg")
 
 for epoch in range(1, epochs+1):
     np.random.shuffle(im_inx)
-    train_history = {'ssmi': list(), 'd_loss': list(), 'g_loss': list(), 'mse_loss': list(), 'vgg_loss': list(), 'adv_loss': list()}
-    ssmi_scores = []
+    train_history = {'ssmi': list(), 'psnr': list(), 'loss_d': list(), 'loss_g': list(), 'l1_loss': list(), 'vgg_loss': list(), 'adv_loss': list()}
+    
     for i in range(1, len(im_inx)+1):
-        try:
-            img = cv2.imread(im_inx[i-1])
-            img = tf.image.random_crop(img, (128,128,3)).numpy()
-            imgs.append(img)
-        except: 
-            continue
+        img = cv2.cvtColor(cv2.imread(im_inx[i-1], cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
+        img = tf.image.random_crop(img, (128,128,3)).numpy()
+        imgs.append(img)
 
         if len(imgs) >= batchs or epoch == epochs:
             imgs_tensor_hr = np.array(imgs, dtype=np.float32)
@@ -100,10 +102,10 @@ for epoch in range(1, epochs+1):
             with tf.GradientTape() as tape:
                 hr_disc = Discriminator(imgs_tensor_hr)
                 sr_disc = Discriminator(imgs_tensor_sr)
-                D_RF = tf.cast(tf.sigmoid(hr_disc - tf.reduce_mean(sr_disc)), dtype=tf.float64)
-                D_FR = tf.cast(tf.sigmoid(sr_disc - tf.reduce_mean(hr_disc)), dtype=tf.float64)
-                loss_d = tf.reduce_mean(bce(tf.ones_like(input=D_RF), D_RF) + bce(tf.zeros_like(input=D_FR), D_FR))
-                train_history['loss_d'] = float(loss_d)
+                D_RF = tf.sigmoid(hr_disc - tf.reduce_mean(sr_disc))
+                D_FR = tf.sigmoid(sr_disc - tf.reduce_mean(hr_disc))
+                loss_d = (bce(tf.ones_like(input=D_RF), D_RF) + bce(tf.zeros_like(input=D_FR), D_FR)) /2
+
             optim_d.minimize(loss_d, Discriminator.trainable_variables, tape = tape)
 
             #Update G
@@ -113,23 +115,15 @@ for epoch in range(1, epochs+1):
                 sr_disc = Discriminator(imgs_tensor_sr)
                 D_RF = tf.sigmoid(hr_disc - tf.reduce_mean(sr_disc))
                 D_FR = tf.sigmoid(sr_disc - tf.reduce_mean(hr_disc))
-                imgs_tensor_sr_feature_map = feature_extractor(imgs_tensor_sr) / 12.75
-                imgs_tensor_hr_feature_map = feature_extractor(imgs_tensor_hr) / 12.75
+                adv_loss = (bce(tf.zeros_like(input=D_RF), D_RF) + bce(tf.ones_like(input=D_FR), D_FR)) /2
+                
+                imgs_tensor_sr_feature_map = feature_extractor(127.5 * imgs_tensor_sr + 127.5) / 12.75
+                imgs_tensor_hr_feature_map = feature_extractor(127.5 * imgs_tensor_hr + 127.5) / 12.75
+                vgg_loss = mse(imgs_tensor_sr_feature_map, imgs_tensor_hr_feature_map)
 
-                adv_loss = tf.reduce_mean(bce(tf.zeros_like(input=D_RF), D_RF) + bce(tf.ones_like(input=D_FR), D_FR))
-
-                vgg_loss = tf.reduce_mean(tf.square(imgs_tensor_sr_feature_map - imgs_tensor_hr_feature_map), axis=(1,2,3)) * 3
-                vgg_loss = tf.reduce_mean(vgg_loss)
-
-                l1_loss = tf.reduce_mean(tf.abs(imgs_tensor_sr - imgs_tensor_hr), axis=(1,2,3))
-                l1_loss = tf.reduce_mean(l1_loss)
+                l1_loss = mae(imgs_tensor_sr, imgs_tensor_hr)
 
                 loss_g = adv_loss * 0.005 + vgg_loss + l1_loss * 0.01
-
-                train_history['adv_loss'] = float(adv_loss)
-                train_history['vgg_loss'] = float(vgg_loss)
-                train_history['l1_loss'] = float(l1_loss)
-                train_history['loss_g'] = float(loss_g)
 
             optim_g.minimize(loss_g, Generator.trainable_variables, tape=tape)
 
@@ -139,26 +133,26 @@ for epoch in range(1, epochs+1):
             imgs_tensor_sr[imgs_tensor_sr < 0] = 0
             imgs_tensor_hr = (imgs_tensor_hr + 1) / 2
 
-            plt.subplot(1,3,1)
-            plt.imshow(BGR2RGB(imgs_tensor_lr[0]))
-            plt.subplot(1,3,2)
-            plt.imshow(BGR2RGB(imgs_tensor_sr[0]))
-            plt.subplot(1,3,3)
-            plt.imshow(BGR2RGB(imgs_tensor_hr[0]))
-            plt.savefig('train_sample.png')
+            train_history['loss_d'].append(round(float(loss_d), 5))
+            train_history['adv_loss'].append(round(float(adv_loss), 5))
+            train_history['vgg_loss'].append(round(float(vgg_loss), 5))
+            train_history['l1_loss'].append(round(float(l1_loss), 5))
+            train_history['loss_g'].append(round(float(loss_g), 5))
+            train_history['ssmi'].append(round(float(np.mean(tf.image.ssim(imgs_tensor_sr, imgs_tensor_hr, max_val = 1).numpy())), 5))
+            train_history['psnr'].append(round(float(np.mean(tf.image.psnr(imgs_tensor_sr, imgs_tensor_hr, max_val = 1).numpy())), 5))
 
-            print("\r", end="")
-            print("\repochs:", epoch, ", step:", i, len(im_inx), ", G loss:", round(float(loss_g), 5), ", D loss:", round(float(loss_d), 5), "ssim:", round(np.mean(tf.image.ssim(imgs_tensor_sr, imgs_tensor_hr, max_val = 1).numpy()), 5), "        ", end="")
+            print("\repochs:", epoch, ", step:", i, len(im_inx), ", loss_g:", train_history['loss_g'][-1], ",loss_d", train_history['loss_d'][-1], "ssim:", train_history['ssmi'][-1], ", psnr:", train_history['psnr'][-1], end="")
             train_history['ssmi'].append(np.mean(tf.image.ssim(imgs_tensor_sr, imgs_tensor_hr, max_val = 1).numpy()))
             iter_count += 1
-            
+    
+    Generator.save('Generator.h5')
+    Discriminator.save('Discriminator.h5')
+
     print("\nepochs:", epoch, 
           'ssmi mean:', round(np.mean(train_history['ssmi']), 5), 
+          'psnr mean:', round(np.mean(train_history['psnr']), 5), 
           'loss_d', round(np.mean(train_history['loss_d']), 5), 
           'loss_g', round(np.mean(train_history['loss_g']), 5), 
           'adv_loss', round(np.mean(train_history['adv_loss']), 5), 
           'vgg_loss', round(np.mean(train_history['vgg_loss']), 5), 
           'l1_loss', round(np.mean(train_history['l1_loss']), 5))
-    
-    Generator.save('Generator.h5')
-    Discriminator.save('Discriminator.h5')

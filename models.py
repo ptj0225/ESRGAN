@@ -72,8 +72,8 @@ def get_discriminator(include_bn=True):
 
     output = layers.Flatten()(output)
     output = layers.Dense(1024)(output)
-    output = layers.ReLU()(output)
-    output = layers.Dense(1, activation=None)(output)
+    output = layers.LeakyReLU(alpha=0.2)(output)
+    output = layers.Dense(1, activation='linear')(output)
     
     return tf.keras.Model(input, output)
 
@@ -103,7 +103,7 @@ def vgg19():
 def get_feature_extractor():
     input = tf.keras.Input(shape=(None,None,3))
     x = input
-
+    x = tf.keras.applications.vgg19.preprocess_input(x)
     for _ in range(2): x = layers.Conv2D(64, (3, 3), strides=(1, 1), padding="SAME", activation="ReLU")(x)
     x = layers.MaxPooling2D(2, strides=(1, 1), padding="SAME")(x)
 
