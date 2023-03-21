@@ -12,8 +12,11 @@ except:
   # Invalid device or cannot modify virtual devices once initialized.
   pass
 
+alpha = 1
+
 #load trained model / 학습된 이미지 불러오기
 Generator = tf.keras.models.load_model("Generator.h5")
+Generator.set_weights(np.array(Generator.weights) * alpha + np.array(tf.keras.models.load_model('./Generator_PSNR.h5').weights) * (1 - alpha))
 Generator.trainable = False
 
 parser = argparse.ArgumentParser()
@@ -40,4 +43,5 @@ for i in range(len(img_dirs)):
     # Save processed image / 이미지 저장
     save_dir = save_folder + os.path.split(img_dir)[-1]
     img_sr = cv2.cvtColor(img_sr, cv2.COLOR_RGB2BGR)
+    save_dir = save_dir.replace('jpg', 'png')
     cv2.imwrite(save_dir, img_sr)

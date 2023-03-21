@@ -1,4 +1,9 @@
 /train/
+
 /result/
+
 /test/
-Discriminator.h5
+
+*.h5
+
+*.zip
