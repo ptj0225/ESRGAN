@@ -83,7 +83,8 @@ im_inx = glob(train_dir + "*.png") + glob(train_dir + "*.jpg")
 cv2.startWindowThread()
 cv2.namedWindow('sample')
 
-transform_hr = A.Compose([A.RandomRotate90(p=0.5),
+transform_hr = A.Compose([A.RandomResizedCrop(128,128, scale=(1,2,3,4), interpolation=cv2.INTER_CUBIC),
+                          A.RandomRotate90(p=0.5),
                           A.HorizontalFlip(p=0.5)],)
 transform_lr = A.Compose([
                         A.OneOf([A.GaussianBlur(always_apply=True),
