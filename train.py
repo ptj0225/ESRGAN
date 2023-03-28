@@ -23,7 +23,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--epochs', required=False, default=1000, help='epochs')
 parser.add_argument('--batchs', required=False, default=16, help='batchs')
 parser.add_argument('--lr_g', required=False, default=0.0001, help='learning rate of generator')
-parser.add_argument('--lr_d', required=False, default=0.00005, help='learning rate of discriminator')
+parser.add_argument('--lr_d', required=False, default=0.0001, help='learning rate of discriminator')
 parser.add_argument('--train_dir', required=False, default="./train/", help='directory of image to train / 학습 할 이미지 위치')
 parser.add_argument('--load_model', required=False, default=True, help='load saved model / 저장된 모델 불러오기 (1: True, 0: False)')
 parser.add_argument('--use_cpu', required=False, default=False, help='forced to use CPU only / CPU 만 이용해 학습하기 (1: True, 0: False)')
@@ -83,26 +83,32 @@ im_inx = glob(train_dir + "*.png") + glob(train_dir + "*.jpg")
 cv2.startWindowThread()
 cv2.namedWindow('sample')
 
-transform_hr = A.Compose([A.RandomResizedCrop(128,128, scale=(1,2,3,4), interpolation=cv2.INTER_CUBIC),
-                          A.RandomRotate90(p=0.5),
-                          A.HorizontalFlip(p=0.5)],)
+transform_hr = A.Compose([A.OneOf([A.RandomCrop(128,128),
+                                   A.RandomCrop(256,256),
+                                   A.RandomCrop(384,384),
+                                   A.RandomCrop(512,512),
+                                   A.RandomCrop(640,640)], p=1),
+                        A.Resize(128,128, interpolation=cv2.INTER_CUBIC),
+                        A.RandomRotate90(p=0.5),
+                        A.HorizontalFlip(p=0.5)],)
+
 transform_lr = A.Compose([
                         A.OneOf([A.GaussianBlur(always_apply=True),
-                                   A.RingingOvershoot(always_apply=True)], p=1),
+                                   A.RingingOvershoot(always_apply=True)], p=0.7),
                         A.OneOf([A.Resize(64, 64, always_apply=True, interpolation=cv2.INTER_AREA),
                                  A.Resize(64, 64, always_apply=True, interpolation=cv2.INTER_CUBIC),
                                  A.Resize(64, 64, always_apply=True, interpolation=cv2.INTER_LINEAR)], p=1),
                         A.OneOf([A.GaussNoise(always_apply=True),
-                                 A.ISONoise(always_apply=True),], p=1),
-                        A.ImageCompression(quality_lower=50, always_apply=True),
+                                 A.ISONoise(always_apply=True),], p=0.7),
+                        A.ImageCompression(quality_lower=70, p=0.7),
                         A.OneOf([A.GaussianBlur(always_apply=True),
-                                   A.RingingOvershoot(always_apply=True)], p=1),
+                                   A.RingingOvershoot(always_apply=True)], p=0.7),
                         A.OneOf([A.Resize(32, 32, always_apply=True, interpolation=cv2.INTER_AREA),
                                  A.Resize(32, 32, always_apply=True, interpolation=cv2.INTER_CUBIC),
                                  A.Resize(32, 32, always_apply=True, interpolation=cv2.INTER_LINEAR)], p=1),
                         A.OneOf([A.GaussNoise(always_apply=True),
-                                 A.ISONoise(always_apply=True)], p=1),
-                        A.ImageCompression(quality_lower=50, always_apply=True)
+                                 A.ISONoise(always_apply=True)], p=0.7),
+                        A.ImageCompression(quality_lower=70, p=0.7)
                                  ])
 
 
@@ -113,12 +119,12 @@ for epoch in range(1, epochs+1):
     for i in range(1, len(im_inx)+1):
         try:
             img = cv2.cvtColor(cv2.imread(im_inx[i-1], cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB)
-            imgs.append(img)
+            imgs.append(transform_hr(image=img)['image'])
         except:
             pass
 
         if len(imgs) >= batchs or epoch == epochs:
-            imgs_tensor_hr = np.array(list(map(lambda x: transform_hr(image=x)['image'], imgs)), dtype=np.uint8)
+            imgs_tensor_hr = np.array(imgs, dtype=np.uint8)
             imgs_tensor_lr = np.array(list(map(lambda x: transform_lr(image=x)['image'], imgs_tensor_hr)), dtype=np.uint8)
 
             imgs_tensor_lr[imgs_tensor_lr >= 255] = 255
@@ -144,7 +150,7 @@ for epoch in range(1, epochs+1):
                 sr_disc = Discriminator(imgs_tensor_sr)
                 D_RF = tf.sigmoid(hr_disc - tf.reduce_mean(sr_disc))
                 D_FR = tf.sigmoid(sr_disc - tf.reduce_mean(hr_disc))
-                loss_d = (bce(tf.ones_like(input=D_RF), D_RF) + bce(tf.zeros_like(input=D_FR), D_FR))/2
+                loss_d = (bce(tf.ones_like(input=D_RF) - 0.00001, D_RF) + bce(tf.zeros_like(input=D_FR) + 0.00001, D_FR))/2
 
             optim_d.minimize(loss_d, Discriminator.trainable_variables, tape = tape)
 
@@ -189,10 +195,6 @@ for epoch in range(1, epochs+1):
             sample_img = cv2.resize(sample_img, dsize=(900,300), interpolation=cv2.INTER_LINEAR)
             cv2.imshow(winname = 'sample', mat=sample_img)
             cv2.waitKey(1)
-
-            if iter_count % 100 == 0:
-                Generator.save('Generator.h5')
-                Discriminator.save('Discriminator.h5')
 
             train_history['loss_d'].append(round(float(loss_d), 5))
             train_history['adv_loss'].append(round(float(adv_loss), 5))

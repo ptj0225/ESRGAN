@@ -1,9 +1,6 @@
 /train/
-
 /result/
-
 /test/
-
-*.h5
-
-*.zip
+./show.ipynb
+./*.h5
+./*.zip
