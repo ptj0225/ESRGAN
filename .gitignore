@@ -1,6 +1,3 @@
-/train/
-/result/
-/test/
 ./show.ipynb
 ./*.h5
 ./*.zip
